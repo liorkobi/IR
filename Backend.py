@@ -1,8 +1,12 @@
 import math
 import re
+
+import gcsfs
 import requests
 
 import pandas as pd
+import nltk
+# nltk.download('stopwords')
 
 from inverted_index_gcp import InvertedIndex
 from nltk.corpus import stopwords
@@ -64,16 +68,25 @@ def get_wikipedia_page_title(doc_id):
 
 
 
-
 class Backend:
     def __init__(self):
-        colnames = ['doc_id', 'pr']
+        colnames_pr = ['doc_id', 'pr'] # pagerank
+        colnames_id_len = ['doc_id', 'len'] # dict_id_len
 
-        self.pr_scores = pd.read_csv('pr_part-00000-1ff1ba87-95eb-4744-acae-eef3dd0fa58f-c000.csv.gz', names=colnames, compression='gzip')
+        # pagerank score
+        self.pr_scores = pd.read_csv('gs://ir-proj/pr/part-00000-1ff1ba87-95eb-4744-acae-eef3dd0fa58f-c000.csv.gz', names=colnames_pr, compression='gzip')
         self.pr_scores_dict = convert_pr_scores_to_dict(self.pr_scores)
-        self.index_title = InvertedIndex.read_index("indexTitle", "titles", "ir-proj1")
 
-        # self.pr_scores = read_pr("pr", "part-00000-1ff1ba87-95eb-4744-acae-eef3dd0fa58f-c000.csv.gz", "ir-proj")
+       # dict of title and id document
+        self.title_dict = InvertedIndex.read_index("title_id", "titles", "ir-proj").title_dict
+
+        # total term in corpus
+        self.total_term = InvertedIndex.read_index("total_term", "index", "ir-proj").term_total
+
+        # Id's of documents and there len
+        dict_id_len = pd.read_csv('gs://ir-proj/doc_id_len/part-00000-1740a912-5c7a-428a-859e-4b8ab436c316-c000.csv.gz', names=colnames_id_len, compression='gzip')
+        self.dict_id_len = dict_id_len.set_index('doc_id')['len'].to_dict()
+
         # Assuming the read_index method returns an InvertedIndex instance
         self.index_text = InvertedIndex.read_index("text", "index", "ir-proj")
 
@@ -82,7 +95,7 @@ class Backend:
         print(self.index_text.term_total.items())
         self.idf_scores = {term.lower(): math.log(self.total_docs / self.index_text.get_doc_frequency(term)) for term in set(self.index_text.df.keys())}
 
-    def calculate_tf_idf_title(self, query):
+    def calculate_tf_idf(self, query):
         tf_idf_scores = {}
         # Tokenize and filter out stopwords
         tokens = [token.group() for token in re.finditer(r'\w+', query.lower()) if token.group() not in all_stopwords]
@@ -104,7 +117,7 @@ class Backend:
         for doc_id, tf_idf_score in sorted(tf_idf_scores.items(), key=lambda item: item[1], reverse=True)[:100]:
             page_rank_score = self.pr_scores_dict.get(doc_id, 0)
             combined_score = tf_idf_score + page_rank_score
-            res.append((combined_score, doc_id, self.index_title.title_dict.get(doc_id)))
+            res.append((combined_score, doc_id, self.title_dict.title_dict.get(doc_id)))
 
         # Sort by the combined score
         res_sorted = sorted(res, key=lambda x: x[0], reverse=True)
