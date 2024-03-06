@@ -100,6 +100,7 @@ class Backend:
                            set(self.index_text.df.keys())}
 
     def calculate_tf_idf(self, query):
+
         tf_idf_scores = {}
         # Tokenize and filter out stopwords
         tokens = [token.group() for token in re.finditer(r'\w+', query.lower()) if token.group() not in all_stopwords]
@@ -123,11 +124,12 @@ class Backend:
             combined_score = tf_idf_score + page_rank_score
             res.append((combined_score, doc_id, self.title_dict.title_dict.get(doc_id)))
 
+
         # Sort by the combined score
         res_sorted = sorted(res, key=lambda x: x[0], reverse=True)
 
         # Extract only the title and document ID from the sorted results
-        res_final = [(doc_title, doc_id) for _, doc_id, doc_title in res_sorted]
+        res_final = [(doc_id,doc_title ) for _,doc_id, doc_title in res_sorted]
 
         # Now, res_final contains tuples of (title, document ID), sorted by combined_score
         print(res_final)
@@ -160,6 +162,36 @@ class Backend:
         sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
         return sorted_scores
+
+    def calculate_bm25_scores(self, query):
+        # Tokenize and preprocess query
+        tokens = [token.group() for token in RE_WORD.finditer(query.lower()) if token.group() not in all_stopwords]
+
+        # Parameters for BM25
+        k1 = 1.5
+        b = 0.75
+
+        scores = {}
+        for term in tokens:
+            if term in self.idf_scores:
+                idf = self.idf_scores[term]
+                for doc_id, freq in self.index_text.get_posting_list(term):
+                    # Calculate term frequency in document
+                    tf = freq
+                    # Document length
+                    dl = len(
+                        self.documents[doc_id])  # Assuming `self.documents[doc_id]` gives the length of document `doc_id`
+                    # BM25 score calculation
+                    score = idf * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * (dl / avgdl)))
+                    if doc_id not in scores:
+                        scores[doc_id] = 0
+                    scores[doc_id] += score
+
+        # Sort documents by their scores in descending order
+        sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+
+        return sorted_scores
+
 
 english_stopwords = frozenset(stopwords.words('english'))
 corpus_stopwords = ["category", "references", "also", "external", "links",
