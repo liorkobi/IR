@@ -3,7 +3,18 @@ from pyngrok import ngrok
 
 from Backend import Backend
 
+# from google.cloud import storage
+# from google.oauth2 import service_account
+#
+# credentials = service_account.Credentials.from_service_account_file(r'C:\Users\PC\Downloads\ircourse1-11e6825807bf.json')
+# client = storage.Client(credentials=credentials)
+import os
+
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = r"C:\Users\PC\Downloads\ircourse1-11e6825807bf.json"
+
+
 import time  # Import the time module
+
 
 class MyFlaskApp(Flask):
     def __init__(self, *args, **kwargs):
@@ -50,7 +61,7 @@ def search():
     start_time = time.time()  # Start timing
 
     # BEGIN SOLUTION
-    res = app.backend.calculate_tf_idf_title(query)
+    res = app.backend.calculate_bm25_scores(query)
 
     # END SOLUTION
 
@@ -63,7 +74,6 @@ def search():
     # print(jsonify(res))
 
     return jsonify(res)
-
 
 
 @app.route("/search_body")
@@ -89,7 +99,7 @@ def search_body():
     # BEGIN SOLUTION
 
     # END SOLUTION
-    res = [{"wiki_id": wiki_id, "title": title} for wiki_id, title in app.backend.calculate_tf_idf_title(query)]
+    res = [{"wiki_id": wiki_id, "title": title} for wiki_id, title in app.backend.calculate_tf_idf(query)]
     return res
 
     # return jsonify(res)
@@ -210,6 +220,7 @@ def get_pageview():
     # END SOLUTION
     return jsonify(res)
 
+
 def test():
     import json
 
@@ -278,7 +289,7 @@ def test():
     # url = 'http://35.232.59.3:8080'
     # http://192.168.68.115:8080/.ngrok.io
     # place the domain you got from ngrok or GCP IP below.
-    url = 'https://6176-35-232-193-179.ngrok-free.app'
+    url = 'https://ec26-35-202-43-205.ngrok-free.app'
 
     qs_res = []
     for q, true_wids in queries.items():
@@ -298,9 +309,8 @@ def test():
     return qs_res
 
 
-
 if __name__ == '__main__':
-    ngrok.set_auth_token("2d0PCekwyANHSOeQAN6oIvHGSKW_3MLQVx7ZSvZfdFgsSPoFC")
+    ngrok.set_auth_token("")
     public_url = ngrok.connect(5000).public_url
     print(f" * ngrok tunnel \"{public_url}\" -> \"http://127.0.0.1:5000\"")
     # Update any base URLs to use the public ngrok URL

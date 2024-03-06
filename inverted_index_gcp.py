@@ -145,7 +145,6 @@ class InvertedIndex:
         # the number of bytes from the beginning of the file where the posting list
         # starts.
         self.posting_locs = defaultdict(list)
-
         for doc_id, tokens in docs.items():
             self.dict_title[doc_id]=get_wikipedia_page_title(doc_id)
             self.add_doc(doc_id, tokens)
