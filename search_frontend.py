@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 from pyngrok import ngrok
+ngrok.set_auth_token("2d0PCekwyANHSOeQAN6oIvHGSKW_3MLQVx7ZSvZfdFgsSPoFC")
 
 from Backend import Backend
 
@@ -8,10 +9,9 @@ from Backend import Backend
 #
 # credentials = service_account.Credentials.from_service_account_file(r'C:\Users\PC\Downloads\ircourse1-11e6825807bf.json')
 # client = storage.Client(credentials=credentials)
-import os
-
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = r"C:\Users\PC\Downloads\ircourse1-11e6825807bf.json"
-
+# import os
+#
+# os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = r"C:\Users\PC\Downloads\ircourse1-11e6825807bf.json"
 
 import time  # Import the time module
 
@@ -99,7 +99,7 @@ def search_body():
     # BEGIN SOLUTION
 
     # END SOLUTION
-    res = [{"wiki_id": wiki_id, "title": title} for wiki_id, title in app.backend.calculate_tf_idf(query)]
+    res = [{"wiki_id": wiki_id, "title": title} for wiki_id, title in app.backend.calculate_bm25_scores(query)]
     return res
 
     # return jsonify(res)
@@ -289,7 +289,7 @@ def test():
     # url = 'http://35.232.59.3:8080'
     # http://192.168.68.115:8080/.ngrok.io
     # place the domain you got from ngrok or GCP IP below.
-    url = 'https://ec26-35-202-43-205.ngrok-free.app'
+    url = 'https://4926-35-231-118-233.ngrok-free.app'
 
     qs_res = []
     for q, true_wids in queries.items():
@@ -302,13 +302,16 @@ def test():
                 pred_wids, _ = zip(*res.json())
                 rq = results_quality(true_wids, pred_wids)
                 qs_res.append((q, duration, rq))
+                print(qs_res)
+
 
         except:
             pass
+    print(qs_res)
 
 
 if __name__ == '__main__':
-    ngrok.set_auth_token("")
+    ngrok.set_auth_token("2dKHAD0LH0e4QLkS0CBQfGG77oh_p6F8pvvqK7enE5N1tw1T")
     public_url = ngrok.connect(5000).public_url
     print(f" * ngrok tunnel \"{public_url}\" -> \"http://127.0.0.1:5000\"")
     # Update any base URLs to use the public ngrok URL
@@ -317,4 +320,4 @@ if __name__ == '__main__':
 
     # run the Flask RESTful API, make the server publicly available (host='0.0.0.0') on port 8080
     # app.run(host='0.0.0.0', port=5000, debug=True)
-    # test()
+    #test()

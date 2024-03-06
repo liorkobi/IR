@@ -2,6 +2,7 @@ import math
 import re
 
 import gcsfs
+import numpy as np
 import requests
 
 import pandas as pd
@@ -18,6 +19,7 @@ import csv
 import gzip
 import os
 import shutil
+from nltk.corpus import wordnet
 
 
 def read_pr(base_dir, name, bucket_name):
@@ -99,6 +101,68 @@ class Backend:
         self.idf_scores = {term.lower(): math.log(self.total_docs / self.index_text.get_doc_frequency(term)) for term in
                            set(self.index_text.df.keys())}
 
+
+    # def expand_query_with_synonyms(self, query):
+    #     expanded_query = set()
+    #
+    #     # Tokenize the query
+    #     query_tokens = query.split()
+    #
+    #     # Iterate over each token in the query
+    #     for token in query_tokens:
+    #         # Get synonyms from WordNet
+    #         synonyms = set()
+    #         for syn in wordnet.synsets(token):
+    #             for lemma in syn.lemmas():
+    #                 synonyms.add(lemma.name().lower())
+    #
+    #         # Add the original token and its synonyms to the expanded query
+    #         expanded_query.add(token.lower())
+    #         expanded_query.update(synonyms)
+    #
+    #     # Convert the expanded query back to a string
+    #     expanded_query_str = ' '.join(expanded_query)
+    #
+    #     return expanded_query_str
+
+    def get_candidate_documents_and_scores(self, query_to_search):
+        candidates = {}
+        for term in np.unique(query_to_search):
+            if term in self.index_text.df.keys():
+                list_of_doc = self.index_text.get_posting_list(term, "text", "ir-proj")
+                normalized_tfidf = [(doc_id, (freq / self.index_text.DL[doc_id]) * math.log(len(self.index_text.DL) / self.index_text.df[term], 10))
+                                   for
+                                   doc_id, freq in list_of_doc]
+
+                for doc_id, tfidf in normalized_tfidf:
+                    candidates[(doc_id, term)] = candidates.get((doc_id, term), 0) + tfidf
+
+        return candidates
+
+    def calc_idf(self, list_of_tokens):
+        """
+        This function calculate the idf values according to the BM25 idf formula for each term in the query.
+
+        Parameters:
+        -----------
+        query: list of token representing the query. For example: ['look', 'blue', 'sky']
+
+        Returns:
+        -----------
+        idf: dictionary of idf scores. As follows:
+                                                    key: term
+                                                    value: bm25 idf score
+        """
+        idf = {}
+        for term in list_of_tokens:
+            if term in self.index_text.df.keys():
+                n_ti = self.index_text.df[term]
+                idf[term] = math.log(1 + (self.N - n_ti + 0.5) / (n_ti + 0.5))
+            else:
+                pass
+
+        return idf
+
     def calculate_tf_idf(self, query):
         tf_idf_scores = {}
         # Tokenize and filter out stopwords
@@ -121,45 +185,63 @@ class Backend:
         for doc_id, tf_idf_score in sorted(tf_idf_scores.items(), key=lambda item: item[1], reverse=True)[:100]:
             page_rank_score = self.pr_scores_dict.get(doc_id, 0)
             combined_score = tf_idf_score + page_rank_score
-            res.append((combined_score, doc_id, self.title_dict.title_dict.get(doc_id)))
+            res.append((combined_score, str(doc_id), self.title_dict.get(doc_id)))
 
         # Sort by the combined score
         res_sorted = sorted(res, key=lambda x: x[0], reverse=True)
 
         # Extract only the title and document ID from the sorted results
-        res_final = [(doc_title, doc_id) for _, doc_id, doc_title in res_sorted]
+        res_final = [(doc_id,doc_title ) for _,doc_id, doc_title in res_sorted]
 
         # Now, res_final contains tuples of (title, document ID), sorted by combined_score
         print(res_final)
         return res_final
 
-    def calculate_bm25_scores(self, query):
-        # Tokenize and preprocess query
-        tokens = [token.group() for token in RE_WORD.finditer(query.lower()) if token.group() not in all_stopwords]
+    # def calculate_bm25_scores(self, query):
+    #     # Tokenize and preprocess query
+    #     tokens = [token.group() for token in RE_WORD.finditer(query.lower()) if token.group() not in all_stopwords]
+    #
+    #     # Parameters for BM25
+    #     k1 = 1.5
+    #     b = 0.75
+    #
+    #     scores = {}
+    #     for doc_id, term in self.get_candidate_documents_and_scores(tokens).keys():
+    #         score = 0
+    #         dl = self.index_text.DL[doc_id]
+    #         for term in tokens:
+    #             if term in self.idf_scores:
+    #                 term_frq = self.calc_idf()
+        # for term in tokens:
+        #     if term in self.idf_scores:
+        #         idf = self.idf_scores[term]
+        #         for doc_id, freq in self.index_text.get_posting_list(term, "text", "ir-proj"):
+        #             # Calculate term frequency in document
+        #             tf = freq
+        #             # Document length
+        #             dl = self.index_text.DL[
+        #                 doc_id]  # Assuming `self.documents[doc_id]` gives the length of document `doc_id`
+        #             # BM25 score calculation
+        #             score = idf * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * (dl / self.avg_DL)))
+        #
+        #             # Update or add the score for the doc_id
+        #             if doc_id in scores:
+        #                 scores[doc_id] += score
+        #             else:
+        #                 scores[doc_id] = score
 
-        # Parameters for BM25
-        k1 = 1.5
-        b = 0.75
-
-        scores = {}
-        for term in tokens:
-            if term in self.idf_scores:
-                idf = self.idf_scores[term]
-                for doc_id, freq in self.index_text.get_posting_list(term, "text", "ir-proj"):
-                    # Calculate term frequency in document
-                    tf = freq
-                    # Document length
-                    dl = self.index_text.DL[doc_id]  # Assuming `self.documents[doc_id]` gives the length of document `doc_id`
-                    # BM25 score calculation
-                    score = idf * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * (dl / self.avg_DL)))
-                    if doc_id not in scores:
-                        scores[doc_id] = 0
-                    scores[doc_id] += score
-
-        # Sort documents by their scores in descending order
-        sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-
-        return sorted_scores
+        # Combine BM25 scores with PageRank and fetch Wikipedia titles
+        # res = []
+        # for doc_id, bm25_score in sorted(scores.items(), key=lambda item: item[1], reverse=True)[:10]:
+        #     page_rank_score = self.pr_scores_dict.get(doc_id, 0)
+        #     combined_score = bm25_score + page_rank_score
+        #     res.append((combined_score, str(doc_id), self.title_dict.get(doc_id)))
+        #
+        # # Sort documents by their combined scores in descending order
+        # res.sort(key=lambda x: x[0], reverse=True)
+        #
+        # res_final = [(doc_id, doc_title) for _, doc_id, doc_title in res]
+        # return res_final
 
 english_stopwords = frozenset(stopwords.words('english'))
 corpus_stopwords = ["category", "references", "also", "external", "links",
