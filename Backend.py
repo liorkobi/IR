@@ -81,7 +81,8 @@ class Backend:
         self.total_docs = self.index_text.total_document_count()
         print(self.index_text.term_total.items())
         self.idf_scores = {term.lower(): math.log(self.total_docs / self.index_text.get_doc_frequency(term)) for term in set(self.index_text.df.keys())}
-
+        self.N = len(self.index.DL)
+        self.AVGDL = sum(self.index_text.DL.values()) / self.N
     def calculate_tf_idf_title(self, query):
         tf_idf_scores = {}
         # Tokenize and filter out stopwords
@@ -104,17 +105,47 @@ class Backend:
         for doc_id, tf_idf_score in sorted(tf_idf_scores.items(), key=lambda item: item[1], reverse=True)[:100]:
             page_rank_score = self.pr_scores_dict.get(doc_id, 0)
             combined_score = tf_idf_score + page_rank_score
-            res.append((combined_score, doc_id, self.index_title.title_dict.get(doc_id)))
+            res.append((combined_score, str(doc_id), self.index_title.title_dict.get(doc_id)))
 
         # Sort by the combined score
         res_sorted = sorted(res, key=lambda x: x[0], reverse=True)
 
         # Extract only the title and document ID from the sorted results
-        res_final = [(doc_title, doc_id) for _, doc_id, doc_title in res_sorted]
+        res_final = [(doc_id,doc_title ) for _,doc_id, doc_title in res_sorted]
 
         # Now, res_final contains tuples of (title, document ID), sorted by combined_score
         print(res_final)
         return res_final
+
+
+    def calculate_bm25_scores(self, query):
+        # Tokenize and preprocess query
+        tokens = [token.group() for token in RE_WORD.finditer(query.lower()) if token.group() not in all_stopwords]
+
+        # Parameters for BM25
+        k1 = 1.5
+        b = 0.75
+
+        scores = {}
+        for term in tokens:
+            if term in self.idf_scores:
+                idf = self.idf_scores[term]
+                for doc_id, freq in self.index_text.get_posting_list(term):
+                    # Calculate term frequency in document
+                    tf = freq
+                    # Document length
+                    dl = len(
+                        self.documents[doc_id])  # Assuming `self.documents[doc_id]` gives the length of document `doc_id`
+                    # BM25 score calculation
+                    score = idf * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * (dl / avgdl)))
+                    if doc_id not in scores:
+                        scores[doc_id] = 0
+                    scores[doc_id] += score
+
+        # Sort documents by their scores in descending order
+        sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+
+        return sorted_scores
 
 
 english_stopwords = frozenset(stopwords.words('english'))

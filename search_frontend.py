@@ -278,7 +278,7 @@ def test():
     # url = 'http://35.232.59.3:8080'
     # http://192.168.68.115:8080/.ngrok.io
     # place the domain you got from ngrok or GCP IP below.
-    url = 'https://e812-34-85-201-197.ngrok-free.app'
+    url = 'https://6176-35-232-193-179.ngrok-free.app'
 
     qs_res = []
     for q, true_wids in queries.items():
@@ -292,8 +292,10 @@ def test():
                 rq = results_quality(true_wids, pred_wids)
                 qs_res.append((q, duration, rq))
 
-        except:
-            pass
+        except Exception as e:
+            print(f"Request failed for query '{q}' with exception: {e}")
+            rq = None
+    return qs_res
 
 
 
@@ -307,4 +309,4 @@ if __name__ == '__main__':
 
     # run the Flask RESTful API, make the server publicly available (host='0.0.0.0') on port 8080
     # app.run(host='0.0.0.0', port=5000, debug=True)
-    # test()
+    # print(test())
