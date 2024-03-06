@@ -19,6 +19,7 @@ import gzip
 import os
 import shutil
 
+
 def read_pr(base_dir, name, bucket_name):
     page_rank_scores = {}
     # Create a GCS client
@@ -40,9 +41,9 @@ def read_pr(base_dir, name, bucket_name):
                 page_rank_scores[doc_id] = float(pr_score)
     return page_rank_scores
 
-def convert_pr_scores_to_dict(pr_scores_df):
-    return pd.Series(pr_scores_df.pr.values,index=pr_scores_df.doc_id).to_dict()
 
+def convert_pr_scores_to_dict(pr_scores_df):
+    return pd.Series(pr_scores_df.pr.values, index=pr_scores_df.doc_id).to_dict()
 
 
 def get_wikipedia_page_title(doc_id):
@@ -58,42 +59,45 @@ def get_wikipedia_page_title(doc_id):
         # Extract the page title from the response
         page = next(iter(data['query']['pages'].values()))
         try:
-            title=page['title']
+            title = page['title']
         except:
             pass
-            title ="Unknown Title"
+            title = "Unknown Title"
         return title
     else:
         return "Unknown Title"
 
 
-
 class Backend:
     def __init__(self):
-        colnames_pr = ['doc_id', 'pr'] # pagerank
-        colnames_id_len = ['doc_id', 'len'] # dict_id_len
+        colnames_pr = ['doc_id', 'pr']  # pagerank
+        colnames_id_len = ['doc_id', 'len']  # dict_id_len
 
         # pagerank score
-        self.pr_scores = pd.read_csv('gs://ir-proj/pr/part-00000-1ff1ba87-95eb-4744-acae-eef3dd0fa58f-c000.csv.gz', names=colnames_pr, compression='gzip')
+        self.pr_scores = pd.read_csv('gs://ir-proj/pr/part-00000-1ff1ba87-95eb-4744-acae-eef3dd0fa58f-c000.csv.gz',
+                                     names=colnames_pr, compression='gzip')
         self.pr_scores_dict = convert_pr_scores_to_dict(self.pr_scores)
 
-       # dict of title and id document
+        # dict of title and id document
         self.title_dict = InvertedIndex.read_index("title_id", "titles", "ir-proj").title_dict
 
         # total term in corpus
         self.total_term = InvertedIndex.read_index("total_term", "index", "ir-proj").term_total
 
-        # Id's of documents and there len
-        dict_id_len = pd.read_csv('gs://ir-proj/doc_id_len/part-00000-1740a912-5c7a-428a-859e-4b8ab436c316-c000.csv.gz', names=colnames_id_len, compression='gzip')
-        self.dict_id_len = dict_id_len.set_index('doc_id')['len'].to_dict()
-
         # Assuming the read_index method returns an InvertedIndex instance
         self.index_text = InvertedIndex.read_index("text", "index", "ir-proj")
 
+        # Id's of documents and there len
+        dict_id_len = pd.read_csv('gs://ir-proj/doc_id_len/part-00000-1740a912-5c7a-428a-859e-4b8ab436c316-c000.csv.gz',
+                                  names=colnames_id_len, compression='gzip')
+        self.index_text.DL = dict_id_len.set_index('doc_id')['len'].to_dict()
+        self.N = len(self.index_text.DL)
+        self.avg_DL = sum(self.index_text.DL.values()) / self.N
         # Ensure that InvertedIndex has an attribute that gives the total number of documents
         self.total_docs = self.index_text.total_document_count()
         print(self.index_text.term_total.items())
-        self.idf_scores = {term.lower(): math.log(self.total_docs / self.index_text.get_doc_frequency(term)) for term in set(self.index_text.df.keys())}
+        self.idf_scores = {term.lower(): math.log(self.total_docs / self.index_text.get_doc_frequency(term)) for term in
+                           set(self.index_text.df.keys())}
 
     def calculate_tf_idf(self, query):
         tf_idf_scores = {}
@@ -129,6 +133,33 @@ class Backend:
         print(res_final)
         return res_final
 
+    def calculate_bm25_scores(self, query):
+        # Tokenize and preprocess query
+        tokens = [token.group() for token in RE_WORD.finditer(query.lower()) if token.group() not in all_stopwords]
+
+        # Parameters for BM25
+        k1 = 1.5
+        b = 0.75
+
+        scores = {}
+        for term in tokens:
+            if term in self.idf_scores:
+                idf = self.idf_scores[term]
+                for doc_id, freq in self.index_text.get_posting_list(term, "text", "ir-proj"):
+                    # Calculate term frequency in document
+                    tf = freq
+                    # Document length
+                    dl = self.index_text.DL[doc_id]  # Assuming `self.documents[doc_id]` gives the length of document `doc_id`
+                    # BM25 score calculation
+                    score = idf * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * (dl / self.avg_DL)))
+                    if doc_id not in scores:
+                        scores[doc_id] = 0
+                    scores[doc_id] += score
+
+        # Sort documents by their scores in descending order
+        sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+
+        return sorted_scores
 
 english_stopwords = frozenset(stopwords.words('english'))
 corpus_stopwords = ["category", "references", "also", "external", "links",
@@ -141,13 +172,12 @@ RE_WORD = re.compile(r"""[\#\@\w](['\-]?\w){2,24}""", re.UNICODE)
 
 NUM_BUCKETS = 124
 
+
 def _hash(s):
     return hashlib.blake2b(bytes(s, encoding='utf8'), digest_size=5).hexdigest()
 
 
 def token2bucket_id(token):
-  return int(_hash(token),16) % NUM_BUCKETS
+    return int(_hash(token), 16) % NUM_BUCKETS
 
 # PLACE YOUR CODE HERE
-
-
