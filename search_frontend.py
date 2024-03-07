@@ -61,7 +61,7 @@ def search():
     start_time = time.time()  # Start timing
 
     # BEGIN SOLUTION
-    res = app.backend.calculate_bm25_scores(query)
+    res = app.backend.search_and_merge(query)
 
     # END SOLUTION
 
