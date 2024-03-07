@@ -1,5 +1,8 @@
 import math
 import re
+from collections import Counter
+from nltk.stem import PorterStemmer
+ps = PorterStemmer()
 
 import gcsfs
 import numpy as np
@@ -48,28 +51,6 @@ def convert_pr_scores_to_dict(pr_scores_df):
     return pd.Series(pr_scores_df.pr.values, index=pr_scores_df.doc_id).to_dict()
 
 
-def get_wikipedia_page_title(doc_id):
-    # Construct the URL for the Wikipedia API
-    url = f"https://en.wikipedia.org/w/api.php?action=query&prop=info&pageids={doc_id}&inprop=url&format=json"
-
-    # Send a GET request to the Wikipedia API
-    response = requests.get(url)
-
-    # Check if the response was successful
-    if response.status_code == 200:
-        data = response.json()
-        # Extract the page title from the response
-        page = next(iter(data['query']['pages'].values()))
-        try:
-            title = page['title']
-        except:
-            pass
-            title = "Unknown Title"
-        return title
-    else:
-        return "Unknown Title"
-
-
 class Backend:
     def __init__(self):
         colnames_pr = ['doc_id', 'pr']  # pagerank
@@ -89,6 +70,9 @@ class Backend:
         # Assuming the read_index method returns an InvertedIndex instance
         self.index_text = InvertedIndex.read_index("text", "index", "ir-proj")
 
+        # self.posting_text = InvertedIndex.read_index("postings_gcp", "index", "liorkob2")
+
+        self.index_title = InvertedIndex.read_index("title", "index", "ir-dict")
         # Id's of documents and there len
         dict_id_len = pd.read_csv('gs://ir-proj/doc_id_len/part-00000-1740a912-5c7a-428a-859e-4b8ab436c316-c000.csv.gz',
                                   names=colnames_id_len, compression='gzip')
@@ -98,9 +82,16 @@ class Backend:
         # Ensure that InvertedIndex has an attribute that gives the total number of documents
         self.total_docs = self.index_text.total_document_count()
         print(self.index_text.term_total.items())
-        self.idf_scores = {term.lower(): math.log(self.total_docs / self.index_text.get_doc_frequency(term)) for term in
-                           set(self.index_text.df.keys())}
 
+        self.idf_scores = {
+            term.lower(): math.log((self.total_docs - self.index_text.get_doc_frequency(term) + 0.5) / (
+                    self.index_text.get_doc_frequency(term) + 0.5) + 1)
+            for term in set(self.index_text.df.keys())
+        }
+        # Pre-calculate constant part of idf formula outside the loop
+        self.constant_part = 0.5 / (self.N + 0.5)
+        lowercase_title_dict = {key: value.lower() for key, value in self.title_dict.items()}
+        self.lower_title_dict = lowercase_title_dict
 
     def expand_query_with_synonyms(self, query):
         expanded_query = set()
@@ -123,19 +114,6 @@ class Backend:
 
         return expanded_query
 
-    def get_candidate_documents_and_scores(self, query_to_search):
-        candidates = {}
-        for term in np.unique(query_to_search):
-            if term in self.index_text.df.keys():
-                list_of_doc = self.index_text.get_posting_list(term, "text", "ir-proj")
-                normalized_tfidf = [(doc_id, (freq / self.index_text.DL[doc_id]) * math.log(len(self.index_text.DL) / self.index_text.df[term], 10))
-                                   for
-                                   doc_id, freq in list_of_doc]
-
-                for doc_id, tfidf in normalized_tfidf:
-                    candidates[(doc_id, term)] = candidates.get((doc_id, term), 0) + tfidf
-
-        return candidates
 
     def calc_idf(self, list_of_tokens):
         """
@@ -164,7 +142,6 @@ class Backend:
 
 
     def calculate_tf_idf(self, query):
-
         tf_idf_scores = {}
         # Tokenize and filter out stopwords
         tokens = [token.group() for token in re.finditer(r'\w+', query.lower()) if token.group() not in all_stopwords]
@@ -184,12 +161,11 @@ class Backend:
             combined_score = tf_idf_score + page_rank_score
             res.append((combined_score, str(doc_id), self.title_dict.get(doc_id)))
 
-
         # Sort by the combined score
         res_sorted = sorted(res, key=lambda x: x[0], reverse=True)
 
         # Extract only the title and document ID from the sorted results
-        res_final = [(doc_id,doc_title ) for _,doc_id, doc_title in res_sorted]
+        res_final = [(doc_id, doc_title) for _, doc_id, doc_title in res_sorted]
 
         # Now, res_final contains tuples of (title, document ID), sorted by combined_score
         return res_final
@@ -301,35 +277,6 @@ class Backend:
                for doc_id, _ in final_results]
 
         return res
-
-    def calculate_bm25_scores(self, query):
-        # Tokenize and preprocess query
-        tokens = [token.group() for token in RE_WORD.finditer(query.lower()) if token.group() not in all_stopwords]
-
-        # Parameters for BM25
-        k1 = 1.5
-        b = 0.75
-
-        scores = {}
-        for term in tokens:
-            if term in self.idf_scores:
-                idf = self.idf_scores[term]
-                for doc_id, freq in self.index_text.get_posting_list(term):
-                    # Calculate term frequency in document
-                    tf = freq
-                    # Document length
-                    dl = len(
-                        self.documents[doc_id])  # Assuming `self.documents[doc_id]` gives the length of document `doc_id`
-                    # BM25 score calculation
-                    score = idf * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * (dl / avgdl)))
-                    if doc_id not in scores:
-                        scores[doc_id] = 0
-                    scores[doc_id] += score
-
-        # Sort documents by their scores in descending order
-        sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-
-        return sorted_scores
 
 
 english_stopwords = frozenset(stopwords.words('english'))
