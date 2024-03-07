@@ -102,28 +102,26 @@ class Backend:
                            set(self.index_text.df.keys())}
 
 
-    # def expand_query_with_synonyms(self, query):
-    #     expanded_query = set()
-    #
-    #     # Tokenize the query
-    #     query_tokens = query.split()
-    #
-    #     # Iterate over each token in the query
-    #     for token in query_tokens:
-    #         # Get synonyms from WordNet
-    #         synonyms = set()
-    #         for syn in wordnet.synsets(token):
-    #             for lemma in syn.lemmas():
-    #                 synonyms.add(lemma.name().lower())
-    #
-    #         # Add the original token and its synonyms to the expanded query
-    #         expanded_query.add(token.lower())
-    #         expanded_query.update(synonyms)
-    #
-    #     # Convert the expanded query back to a string
-    #     expanded_query_str = ' '.join(expanded_query)
-    #
-    #     return expanded_query_str
+    def expand_query_with_synonyms(self, query):
+        expanded_query = set()
+
+        # Tokenize the query
+        query_tokens = query.split()
+
+        # Iterate over each token in the query
+        for token in query_tokens:
+            # Get synonyms from WordNet
+            synonyms = set()
+            for syn in wordnet.synsets(token):
+                for lemma in syn.lemmas():
+                    synonyms.add(lemma.name().lower())
+
+            # Add the original token and its synonyms to the expanded query
+            expanded_query.add(token.lower())
+            expanded_query.update(synonyms)
+
+
+        return expanded_query
 
     def get_candidate_documents_and_scores(self, query_to_search):
         candidates = {}
@@ -141,36 +139,34 @@ class Backend:
 
     def calc_idf(self, list_of_tokens):
         """
-        This function calculate the idf values according to the BM25 idf formula for each term in the query.
+        This function calculates the idf values according to the precomputed BM25 idf scores for each term in the query.
 
         Parameters:
         -----------
-        query: list of token representing the query. For example: ['look', 'blue', 'sky']
+        list_of_tokens: list of token representing the query. For example: ['look', 'blue', 'sky']
 
         Returns:
         -----------
         idf: dictionary of idf scores. As follows:
-                                                    key: term
-                                                    value: bm25 idf score
+                                                        key: term
+                                                        value: bm25 idf score
         """
         idf = {}
         for term in list_of_tokens:
-            if term in self.index_text.df.keys():
-                n_ti = self.index_text.df[term]
-                idf[term] = math.log(1 + (self.N - n_ti + 0.5) / (n_ti + 0.5))
+            if term in self.idf_scores:
+                idf[term] = self.idf_scores[term]
             else:
+                # Optionally handle terms not present in the precomputed scores,
+                # for example, by assigning them a default score.
                 pass
 
         return idf
+
 
     def calculate_tf_idf(self, query):
         tf_idf_scores = {}
         # Tokenize and filter out stopwords
         tokens = [token.group() for token in re.finditer(r'\w+', query.lower()) if token.group() not in all_stopwords]
-
-        # Calculate DF and IDF for each term
-        # doc_freq = {term: self.index_title.get_doc_frequency(term) for term in tokens}
-        # idf = {term: math.log(self.total_docs / df) if df > 0 else 0 for term, df in doc_freq.items()}
 
         # Calculate TF and aggregate TF-IDF for each document
         for term in tokens:
@@ -194,54 +190,115 @@ class Backend:
         res_final = [(doc_id,doc_title ) for _,doc_id, doc_title in res_sorted]
 
         # Now, res_final contains tuples of (title, document ID), sorted by combined_score
-        print(res_final)
         return res_final
 
-    # def calculate_bm25_scores(self, query):
-    #     # Tokenize and preprocess query
-    #     tokens = [token.group() for token in RE_WORD.finditer(query.lower()) if token.group() not in all_stopwords]
-    #
-    #     # Parameters for BM25
-    #     k1 = 1.5
-    #     b = 0.75
-    #
-    #     scores = {}
-    #     for doc_id, term in self.get_candidate_documents_and_scores(tokens).keys():
-    #         score = 0
-    #         dl = self.index_text.DL[doc_id]
-    #         for term in tokens:
-    #             if term in self.idf_scores:
-    #                 term_frq = self.calc_idf()
-        # for term in tokens:
-        #     if term in self.idf_scores:
-        #         idf = self.idf_scores[term]
-        #         for doc_id, freq in self.index_text.get_posting_list(term, "text", "ir-proj"):
-        #             # Calculate term frequency in document
-        #             tf = freq
-        #             # Document length
-        #             dl = self.index_text.DL[
-        #                 doc_id]  # Assuming `self.documents[doc_id]` gives the length of document `doc_id`
-        #             # BM25 score calculation
-        #             score = idf * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * (dl / self.avg_DL)))
-        #
-        #             # Update or add the score for the doc_id
-        #             if doc_id in scores:
-        #                 scores[doc_id] += score
-        #             else:
-        #                 scores[doc_id] = score
 
-        # Combine BM25 scores with PageRank and fetch Wikipedia titles
-        # res = []
-        # for doc_id, bm25_score in sorted(scores.items(), key=lambda item: item[1], reverse=True)[:10]:
-        #     page_rank_score = self.pr_scores_dict.get(doc_id, 0)
-        #     combined_score = bm25_score + page_rank_score
-        #     res.append((combined_score, str(doc_id), self.title_dict.get(doc_id)))
+    def calculate_bm25_scores(self, query):
+        # self.k1 = 1.0
+        # self.b = 0.9
+        k2 = 10.0
+        k1 = 1.5
+        b = 0.75
+        res = []
+        # create an empty Counter object to store document scores
+        candidates = Counter()
+
+        # tokenize and remove stopwords from the query
+        # query = [token.group() for token in re.finditer(r'\w+', query.lower()) if token.group() not in all_stopwords]
+
+        # loop through each term in the query
+        for term in query:
+            # check if the term exists in the corpus
+            if term in self.index_text.df:
+                # read the posting list of the term
+                posting_list = self.index_text.get_posting_list(term, "text", "ir-proj")
+
+                # calculate idf of the term
+                df = self.index_text.df[term]
+                idf = math.log(1 + (self.N - df + 0.5) / (df + 0.5))
+
+                # loop through each (doc_id, freq) pair in the posting list
+                for doc_id, freq in posting_list:
+                    # check if the doc_id exists in the corpus
+                    if doc_id in self.index_text.DL.keys():
+                        len_doc = self.index_text.DL[doc_id]
+
+                        # calculate bm25 score of the term for the document
+                        numerator = idf * freq * (k1 + 1)
+                        denominator = (freq + k1 * (1 - b + b * len_doc / self.avg_DL))
+                        bm25_score = numerator / denominator
+                        bm25_score = bm25_score * ((k2 + 1) * freq / (k2 + freq))
+
+                        # add the bm25 score to the document's score in the candidates Counter
+                        candidates[doc_id] += bm25_score
+        return candidates
+
+    def search_by_title(self, query_tokens):
+        # Initialize a dictionary to store scores for documents
+        title_scores = {}
+
+        # Tokenize the query, similar to how it's done in text search
+        # query_tokens = [token.group() for token in re.finditer(r'\w+', query.lower()) if
+        #                 token.group() not in all_stopwords]
+
+        # Loop through each token in the query
+        for term in query_tokens:
+
+            # Assuming you can get a posting list for titles similar to text
+            if term in self.lower_title_dict.values():
+                posting_list = self.index_title.get_posting_list(term, "title", "ir-dict")
+
+                # Loop through each document in the posting list
+                for doc_id, freq in posting_list:
+                    # Increment score for document; for simplicity, each match increases score by 1
+                    # Consider a more sophisticated scoring method as needed
+                    title_scores[doc_id] = title_scores.get(doc_id, 0) + freq
+
+        # Convert scores to a list of tuples and sort by score
+        sorted_title_scores = sorted(title_scores.items(), key=lambda x: x[1], reverse=True)
+
+        # For simplicity, just return the sorted scores; adjust as needed
+        return sorted_title_scores
+
+    def search_and_merge(self, query):
+        TEXT_WEIGHT = 0.1
+        TITLE_WEIGHT = 0.9
+        # query_tokens = [token.group() for token in re.finditer(r'\w+', query.lower()) if
+        #                 token.group() not in all_stopwords]
         #
-        # # Sort documents by their combined scores in descending order
-        # res.sort(key=lambda x: x[0], reverse=True)
-        #
-        # res_final = [(doc_id, doc_title) for _, doc_id, doc_title in res]
-        # return res_final
+        query_tokens = self.expand_query_with_synonyms(query)
+        # if len(query_tokens) > 1:
+        #     stemmed_tokens = [ps.stem(token) for token in query_tokens if token not in all_stopwords]
+        #     text_results = self.calculate_bm25_scores(stemmed_tokens)
+        # else:
+        #     text_results = self.calculate_bm25_scores(query_tokens)
+
+        # Step 1: Retrieve documents for both text and title
+        text_results = self.calculate_bm25_scores(query_tokens)  # Assuming this or similar function is used for text
+        title_results = self.search_by_title(query_tokens)  # You would need to implement something similar for title search
+
+        # Step 2: Merge results with a chosen strategy (e.g., weighted scores)
+        merged_results = {}
+        for doc_id, score in text_results.items():
+            merged_results[doc_id] = merged_results.get(doc_id, 0) + score * TEXT_WEIGHT
+
+        for doc_id, score in title_results:
+            merged_results[doc_id] = merged_results.get(doc_id, 0) + score * TITLE_WEIGHT
+
+        for doc_id in merged_results.keys():
+
+            page_rank_score = self.pr_scores_dict.get(doc_id, 0)
+            if page_rank_score > 1:
+                page_rank_score = int(math.log10(page_rank_score))
+            merged_results[doc_id] += page_rank_score
+
+        # Step 3: Sort and return final results
+        final_results = sorted(merged_results.items(), key=lambda x: x[1], reverse=True)[:100]
+
+        res = [(str(doc_id), self.title_dict.get(doc_id))
+               for doc_id, _ in final_results]
+
+        return res
 
 english_stopwords = frozenset(stopwords.words('english'))
 corpus_stopwords = ["category", "references", "also", "external", "links",
@@ -262,4 +319,29 @@ def _hash(s):
 def token2bucket_id(token):
     return int(_hash(token), 16) % NUM_BUCKETS
 
-# PLACE YOUR CODE HERE
+# From HW1
+# def most_viewed(pages):
+#   """Rank pages from most viewed to least viewed using the above `wid2pv`
+#      counter.
+#   Parameters:
+#   -----------
+#     pages: An iterable list of pages as returned from `page_iter` where each
+#            item is an article with (id, title, body)
+#   Returns:
+#   --------
+#   A list of tuples
+#     Sorted list of articles from most viewed to least viewed article with
+#     article title and page views. For example:
+#     [('Langnes, Troms': 16), ('Langenes': 10), ('Langenes, Finnmark': 4), ...]
+#   """
+#   # YOUR CODE HERE
+#   result = []
+#   for p in pages:
+#         id = p[0]
+#         if str(id) in wid2pv:
+#             result.append((str(p[1]), wid2pv[id]))  # title, page views
+#         else:
+#           result.append((str(p[1]), 0))
+#   # Sort the result in descending order based on page views
+#   result.sort(key=lambda x: x[1], reverse=True)
+#   return result
