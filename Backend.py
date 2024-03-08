@@ -1,50 +1,13 @@
 import math
 import re
 from collections import Counter
-from nltk.stem import PorterStemmer
-ps = PorterStemmer()
-
-import gcsfs
-import numpy as np
-import requests
-
 import pandas as pd
-import nltk
-# nltk.download('stopwords')
-
 from inverted_index_gcp import InvertedIndex
 from nltk.corpus import stopwords
-
 import hashlib
 
-from google.cloud import storage
-import csv
-import gzip
-import os
-import shutil
-from nltk.corpus import wordnet
-
-
-def read_pr(base_dir, name, bucket_name):
-    page_rank_scores = {}
-    # Create a GCS client
-    client = storage.Client()
-    # Get the bucket object
-    bucket = client.bucket(bucket_name)
-    # Construct the blob path
-    blob_path = f'{base_dir}/{name}'
-    # Get the blob object
-    blob = bucket.blob(blob_path)
-    # Download the blob to a temporary file
-    with blob.open('rb') as blob_file:
-        # Open the gzipped file
-        with gzip.open(blob_file, mode='rt', encoding='utf-8') as gz:
-            # Read the CSV file
-            reader = csv.reader(gz)
-            for row in reader:
-                doc_id, pr_score = row
-                page_rank_scores[doc_id] = float(pr_score)
-    return page_rank_scores
+colnames_pr = ['doc_id', 'pr']  # pagerank
+colnames_id_len = ['doc_id', 'len']  # dict_id_len
 
 
 def convert_pr_scores_to_dict(pr_scores_df):
@@ -53,8 +16,6 @@ def convert_pr_scores_to_dict(pr_scores_df):
 
 class Backend:
     def __init__(self):
-        colnames_pr = ['doc_id', 'pr']  # pagerank
-        colnames_id_len = ['doc_id', 'len']  # dict_id_len
 
         # pagerank score
         self.pr_scores = pd.read_csv('gs://ir-proj/pr/part-00000-1ff1ba87-95eb-4744-acae-eef3dd0fa58f-c000.csv.gz',
@@ -64,88 +25,90 @@ class Backend:
         # dict of title and id document
         self.title_dict = InvertedIndex.read_index("title_id", "titles", "ir-proj").title_dict
 
-        # total term in corpus
-        self.total_term = InvertedIndex.read_index("total_term", "index", "ir-proj").term_total
-
-        # Assuming the read_index method returns an InvertedIndex instance
         self.index_text = InvertedIndex.read_index("text", "index", "ir-proj")
-
-        # self.posting_text = InvertedIndex.read_index("postings_gcp", "index", "liorkob2")
-
+        # self.index_text = InvertedIndex.read_index("text", "index", "new_index_text")
         self.index_title = InvertedIndex.read_index("title", "index", "ir-dict")
-        # Id's of documents and there len
+
+        # # Id's of documents and there len
+        # dict_id_len = pd.read_csv('gs://ir-proj/DL/part-00000-0cc0ccdf-560d-4de0-a3db-b8a0e69db3f8-c000.csv.gz',
+        #                           names=colnames_id_len, compression='gzip')
         dict_id_len = pd.read_csv('gs://ir-proj/doc_id_len/part-00000-1740a912-5c7a-428a-859e-4b8ab436c316-c000.csv.gz',
                                   names=colnames_id_len, compression='gzip')
         self.index_text.DL = dict_id_len.set_index('doc_id')['len'].to_dict()
-        self.N = len(self.index_text.DL)
+
+        # corpus size
+        self.N = self.index_text.total_document_count()
+        # average document length in corpus
         self.avg_DL = sum(self.index_text.DL.values()) / self.N
-        # Ensure that InvertedIndex has an attribute that gives the total number of documents
-        self.total_docs = self.index_text.total_document_count()
-        print(self.index_text.term_total.items())
 
         self.idf_scores = {
-            term.lower(): math.log((self.total_docs - self.index_text.get_doc_frequency(term) + 0.5) / (
+            term.lower(): math.log((self.N - self.index_text.get_doc_frequency(term) + 0.5) / (
                     self.index_text.get_doc_frequency(term) + 0.5) + 1)
             for term in set(self.index_text.df.keys())
         }
-        # Pre-calculate constant part of idf formula outside the loop
+
+        # Pre-calculate constant part of idf formula BM25
         self.constant_part = 0.5 / (self.N + 0.5)
+
         lowercase_title_dict = {key: value.lower() for key, value in self.title_dict.items()}
         self.lower_title_dict = lowercase_title_dict
-
-    def expand_query_with_synonyms(self, query):
-        expanded_query = set()
-
-        # Tokenize the query
-        query_tokens = query.split()
-
-        # Iterate over each token in the query
-        for token in query_tokens:
-            # Get synonyms from WordNet
-            synonyms = set()
-            for syn in wordnet.synsets(token):
-                for lemma in syn.lemmas():
-                    synonyms.add(lemma.name().lower())
-
-            # Add the original token and its synonyms to the expanded query
-            expanded_query.add(token.lower())
-            expanded_query.update(synonyms)
+        # # total term in corpus
+        # self.total_term = InvertedIndex.read_index("total_term", "index", "ir-proj").term_total
 
 
-        return expanded_query
+
+    # def expand_query_with_synonyms(self, query):
+    #     expanded_query = set()
+    #
+    #     # Tokenize the query
+    #     query_tokens = query.split()
+    #
+    #     # Iterate over each token in the query
+    #     for token in query_tokens:
+    #         # Get synonyms from WordNet
+    #         synonyms = set()
+    #         for syn in wordnet.synsets(token):
+    #             for lemma in syn.lemmas():
+    #                 synonyms.add(lemma.name().lower())
+    #
+    #         # Add the original token and its synonyms to the expanded query
+    #         expanded_query.add(token.lower())
+    #         expanded_query.update(synonyms)
+    #
+    #
+    #     return expanded_query
 
 
-    def calc_idf(self, list_of_tokens):
-        """
-        This function calculates the idf values according to the precomputed BM25 idf scores for each term in the query.
-
-        Parameters:
-        -----------
-        list_of_tokens: list of token representing the query. For example: ['look', 'blue', 'sky']
-
-        Returns:
-        -----------
-        idf: dictionary of idf scores. As follows:
-                                                        key: term
-                                                        value: bm25 idf score
-        """
-        idf = {}
-        for term in list_of_tokens:
-            if term in self.idf_scores:
-                idf[term] = self.idf_scores[term]
-            else:
-                # Optionally handle terms not present in the precomputed scores,
-                # for example, by assigning them a default score.
-                pass
-
-        return idf
+    # def calc_idf(self, list_of_tokens):
+    #     """
+    #     This function calculates the idf values according to the precomputed BM25 idf scores for each term in the query.
+    #
+    #     Parameters:
+    #     -----------
+    #     list_of_tokens: list of token representing the query. For example: ['look', 'blue', 'sky']
+    #
+    #     Returns:
+    #     -----------
+    #     idf: dictionary of idf scores. As follows:
+    #                                                     key: term
+    #                                                     value: bm25 idf score
+    #     """
+    #     idf = {}
+    #     for term in list_of_tokens:
+    #         if term in self.idf_scores:
+    #             idf[term] = self.idf_scores[term]
+    #         else:
+    #             # Optionally handle terms not present in the precomputed scores,
+    #             # for example, by assigning them a default score.
+    #             pass
+    #
+    #     return idf
 
 
     def calculate_tf_idf(self, query):
         tf_idf_scores = {}
         # Tokenize and filter out stopwords
         tokens = [token.group() for token in re.finditer(r'\w+', query.lower()) if token.group() not in all_stopwords]
-
         # Calculate TF and aggregate TF-IDF for each document
         for term in tokens:
             postings = self.index_text.get_posting_list(term, "text", "ir-proj")
@@ -172,19 +135,10 @@ class Backend:
 
 
     def calculate_bm25_scores(self, query):
-        # self.k1 = 1.0
-        # self.b = 0.9
         k2 = 10.0
         k1 = 1.5
         b = 0.75
-        res = []
-        # create an empty Counter object to store document scores
         candidates = Counter()
-
-        # tokenize and remove stopwords from the query
-        # query = [token.group() for token in re.finditer(r'\w+', query.lower()) if token.group() not in all_stopwords]
-
-        # loop through each term in the query
         for term in query:
             # check if the term exists in the corpus
             if term in self.index_text.df:
@@ -195,7 +149,6 @@ class Backend:
                 df = self.index_text.df[term]
                 idf = math.log(1 + (self.N - df + 0.5) / (df + 0.5))
 
-                # loop through each (doc_id, freq) pair in the posting list
                 for doc_id, freq in posting_list:
                     # check if the doc_id exists in the corpus
                     if doc_id in self.index_text.DL.keys():
@@ -212,48 +165,31 @@ class Backend:
         return candidates
 
     def search_by_title(self, query_tokens):
-        # Initialize a dictionary to store scores for documents
         title_scores = {}
-
-        # Tokenize the query, similar to how it's done in text search
-        # query_tokens = [token.group() for token in re.finditer(r'\w+', query.lower()) if
-        #                 token.group() not in all_stopwords]
-
-        # Loop through each token in the query
         for term in query_tokens:
-
-            # Assuming you can get a posting list for titles similar to text
             if term in self.lower_title_dict.values():
                 posting_list = self.index_title.get_posting_list(term, "title", "ir-dict")
-
                 # Loop through each document in the posting list
                 for doc_id, freq in posting_list:
-                    # Increment score for document; for simplicity, each match increases score by 1
-                    # Consider a more sophisticated scoring method as needed
+                    # Increment score for document
                     title_scores[doc_id] = title_scores.get(doc_id, 0) + freq
 
         # Convert scores to a list of tuples and sort by score
         sorted_title_scores = sorted(title_scores.items(), key=lambda x: x[1], reverse=True)
-
-        # For simplicity, just return the sorted scores; adjust as needed
         return sorted_title_scores
 
     def search_and_merge(self, query):
-        TEXT_WEIGHT = 0.1
-        TITLE_WEIGHT = 0.9
-        # query_tokens = [token.group() for token in re.finditer(r'\w+', query.lower()) if
-        #                 token.group() not in all_stopwords]
-        #
-        query_tokens = self.expand_query_with_synonyms(query)
-        # if len(query_tokens) > 1:
-        #     stemmed_tokens = [ps.stem(token) for token in query_tokens if token not in all_stopwords]
-        #     text_results = self.calculate_bm25_scores(stemmed_tokens)
-        # else:
-        #     text_results = self.calculate_bm25_scores(query_tokens)
+        TEXT_WEIGHT = 0.6
+        TITLE_WEIGHT = 0.4
+        query_tokens = [token.group() for token in re.finditer(r'\w+', query.lower()) if
+                        token.group() not in all_stopwords]
+        if len(query_tokens)==1 and query_tokens[0] in self.lower_title_dict.values():
+            TEXT_WEIGHT = 0.1
+            TITLE_WEIGHT = 0.9
 
         # Step 1: Retrieve documents for both text and title
-        text_results = self.calculate_bm25_scores(query_tokens)  # Assuming this or similar function is used for text
-        title_results = self.search_by_title(query_tokens)  # You would need to implement something similar for title search
+        text_results = self.calculate_bm25_scores(query_tokens)
+        title_results = self.search_by_title(query_tokens)
 
         # Step 2: Merge results with a chosen strategy (e.g., weighted scores)
         merged_results = {}
@@ -298,7 +234,7 @@ def _hash(s):
 def token2bucket_id(token):
     return int(_hash(token), 16) % NUM_BUCKETS
 
-# From HW1
+# # From HW1
 # def most_viewed(pages):
 #   """Rank pages from most viewed to least viewed using the above `wid2pv`
 #      counter.

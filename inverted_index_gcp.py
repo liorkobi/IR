@@ -1,14 +1,5 @@
-import csv
-import gzip
-import sys
 from collections import Counter, OrderedDict
 import itertools
-from itertools import islice, count, groupby
-import pandas as pd
-import os
-import re
-from operator import itemgetter
-from time import time
 from pathlib import Path
 import pickle
 from google.cloud import storage
@@ -130,7 +121,6 @@ class InvertedIndex:
         -----------
           docs: dict mapping doc_id to list of tokens
         """
-        # stores document frequency per term
         self.df = Counter()
         # stores total frequency per term
         self.term_total = Counter()
