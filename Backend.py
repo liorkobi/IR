@@ -133,8 +133,8 @@ class Backend:
                     title_scores[doc_id] = title_scores.get(doc_id, 0) + freq
 
         # Convert scores to a list of tuples and sort by score
-        sorted_title_scores = sorted(title_scores.items(), key=lambda x: x[1], reverse=True)
-        return sorted_title_scores
+        # sorted_title_scores = sorted(title_scores.items(), key=lambda x: x[1], reverse=True)
+        return title_scores
 
 
     def search_and_merge(self, query):
@@ -174,22 +174,46 @@ class Backend:
 
         # Step 2: Merge results with a chosen strategy (e.g., weighted scores)
         merged_results = {}
+        # First pass: Add text scores, multiply by TEXT_WEIGHT
         for doc_id, score in text_results.items():
-            merged_results[doc_id] = merged_results.get(doc_id, 0) + score * TEXT_WEIGHT
+            merged_results[doc_id] = score * TEXT_WEIGHT
 
-        for doc_id, score in title_results:
-            merged_results[doc_id] = merged_results.get(doc_id, 0) + score * TITLE_WEIGHT
+        # Second pass: Add or update with title scores, multiplied by TITLE_WEIGHT
+        for doc_id, score in title_results.items():
+            if doc_id in merged_results:
+                # If doc_id already exists, update the score
+                merged_results[doc_id] += score * TITLE_WEIGHT
+            else:
+                # Otherwise, add the new doc_id with its score
+                merged_results[doc_id] = score * TITLE_WEIGHT
 
-        for doc_id, score in merged_results.items():
+        # Apply page rank score adjustments
+        for doc_id in merged_results:
             page_rank_score = self.pr_scores_dict.get(doc_id, 0)
             if page_rank_score > 1:
                 page_rank_score = int(math.log10(page_rank_score))
             merged_results[doc_id] += page_rank_score
 
-        # Step 3: Sort and return final results
+        # Sort and return the final results
         final_results = sorted(merged_results.items(), key=lambda x: x[1], reverse=True)[:100]
+        res = [(str(doc_id), self.title_dict.get(doc_id, 'Unknown Title')) for doc_id, _ in final_results]
 
-        res = [(str(doc_id), self.title_dict.get(doc_id))
-               for doc_id, _ in final_results]
+        # for doc_id, score in text_results.items():
+        #     merged_results[doc_id] = merged_results.get(doc_id, 0) + score * TEXT_WEIGHT
+        #
+        # for doc_id, score in title_results:
+        #     merged_results[doc_id] = merged_results.get(doc_id, 0) + score * TITLE_WEIGHT
+        #
+        # for doc_id, score in merged_results.items():
+        #     page_rank_score = self.pr_scores_dict.get(doc_id, 0)
+        #     if page_rank_score > 1:
+        #         page_rank_score = int(math.log10(page_rank_score))
+        #     merged_results[doc_id] += page_rank_score
+
+        # # Step 3: Sort and return final results
+        # final_results = sorted(merged_results.items(), key=lambda x: x[1], reverse=True)[:100]
+        #
+        # res = [(str(doc_id), self.title_dict.get(doc_id))
+        #        for doc_id, _ in final_results]
 
         return res
