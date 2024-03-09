@@ -184,8 +184,9 @@ class Backend:
             # check if the term exists in the corpus
             if term in self.index_text.df:
                 # read the posting list of the term
-                # self.index_text = InvertedIndex.read_index("postings_gcp", "index", "with_stemming")
+
                 posting_list = self.index_text.get_posting_list(term, "text", "with_stemming")
+                # posting_list = self.index_text.get_posting_list(term, "text", "new_index_text")
 
                 # calculate idf of the term
                 df = self.index_text.df[term]
@@ -230,10 +231,10 @@ class Backend:
         query_tokens = [token.group() for token in re.finditer(r'\w+', query.lower()) if
                         token.group() not in all_stopwords]
 
-        if len(query_tokens)==1:
-            if query_tokens[0]  in self.lower_title_dict.values():
-                TEXT_WEIGHT = 0.1
-                TITLE_WEIGHT = 0.9
+        if len(query_tokens)<=3:
+            # if query_tokens[0]  in self.lower_title_dict.values():
+            TEXT_WEIGHT = 0.1
+            TITLE_WEIGHT = 0.9
 
         # Step 1: Retrieve documents for both text and title
         text_results = self.calculate_bm25_scores(query_tokens_stem)
