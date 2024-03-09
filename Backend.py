@@ -15,6 +15,40 @@ stemmer = PorterStemmer()
 colnames_pr = ['doc_id', 'pr']  # pagerank
 colnames_pv = ['doc_id', 'views']  # pageviews
 colnames_id_len = ['doc_id', 'len']  # dict_id_len
+import re
+
+
+def preprocess_query(query):
+    # Extract phrases in quotation marks
+    phrases_in_quotes = re.findall(r'"([^"]+)"', query)
+    # Remove the extracted phrases from the query to handle the rest of the tokens as usual
+    query_without_phrases = re.sub(r'"[^"]+"', '', query)
+
+    # Continue with stemming and stopwords removal for the remaining parts of the query
+    query_tokens_stem = [stemmer.stem(token.group()) for token in re.finditer(r'\w+', query_without_phrases.lower()) if
+                         token.group() not in all_stopwords]
+    query_tokens = [token.group() for token in re.finditer(r'\w+', query_without_phrases.lower()) if
+                    token.group() not in all_stopwords]
+
+    # Add extracted phrases back into tokens list without stemming but removing stopwords could be considered
+    for phrase in phrases_in_quotes:
+        # Optionally remove stopwords from the phrase or treat as is for exact match
+        query_tokens.append(phrase)
+        # Depending on how you handle stemming for phrases, you might want to add them as is or apply some form of normalization
+
+    return query_tokens_stem, query_tokens
+
+
+def classify_query(query):
+    # Keywords for factual questions
+    if re.search(r'who|what|when|where|why|how|which', query, re.IGNORECASE):
+        return 'factual'
+    # Keywords or patterns for detailed explanations
+    elif re.search(r'describe|explain|process|structure', query, re.IGNORECASE):
+        return 'detailed_explanation'
+    # If none match, consider it a broad topic
+    else:
+        return 'broad_topic'
 
 def open_json(gcs_path):
     # Create a GCS client
@@ -223,14 +257,36 @@ class Backend:
 
 
     def search_and_merge(self, query):
-        TEXT_WEIGHT = 0.6
-        TITLE_WEIGHT = 0.4
-        query_tokens_stem= [stemmer.stem(token.group()) for token in re.finditer(r'\w+', query.lower()) if
-                        token.group() not in all_stopwords]
-
+            # Existing preprocessing
+        query_tokens_stem = [stemmer.stem(token.group()) for token in re.finditer(r'\w+', query.lower()) if
+                             token.group() not in all_stopwords]
         query_tokens = [token.group() for token in re.finditer(r'\w+', query.lower()) if
                         token.group() not in all_stopwords]
 
+        # query_tokens_stem, query_tokens = preprocess_query(query)
+
+            # Classify the query
+        query_type = classify_query(query)
+
+        # Adjust weights based on query type
+        if query_type == 'factual':
+            TEXT_WEIGHT = 0.1
+            TITLE_WEIGHT = 0.9
+        elif query_type == 'detailed_explanation':
+            TEXT_WEIGHT = 0.7
+            TITLE_WEIGHT = 0.3
+        else:  # Broad topic
+            TEXT_WEIGHT = 0.6
+            TITLE_WEIGHT = 0.4
+
+        # TEXT_WEIGHT = 0.6
+        # TITLE_WEIGHT = 0.4
+        # query_tokens_stem= [stemmer.stem(token.group()) for token in re.finditer(r'\w+', query.lower()) if
+        #                 token.group() not in all_stopwords]
+        #
+        # query_tokens = [token.group() for token in re.finditer(r'\w+', query.lower()) if
+        #                 token.group() not in all_stopwords]
+        #
         if len(query_tokens)<=3:
             # if query_tokens[0]  in self.lower_title_dict.values():
             TEXT_WEIGHT = 0.1
@@ -248,54 +304,13 @@ class Backend:
         for doc_id, score in title_results:
             merged_results[doc_id] = merged_results.get(doc_id, 0) + score * TITLE_WEIGHT
 
-        # for doc_id in merged_results.keys():
-        #     # Factor in PageRank and popularity of pages.
-        #     page_rank_score = self.pr_scores_dict.get(doc_id, 0)
-        #     if page_rank_score > 1:
-        #         page_rank_score = int(math.log10(page_rank_score))
-        #     page_view_score = self.pv_scores_dict.get(doc_id, 0)
-        #
-        #     if page_view_score > 1:
-        #         page_view_score = int(math.log2(page_view_score))
-        #     elif page_view_score < 1:
-        #         page_view_score = 2.0
-        #     merged_results[doc_id] += page_rank_score+page_view_score
-        # min_pr_score = min(self.pr_scores_dict.values())
-        # max_pr_score = max(self.pr_scores_dict.values())
-        # normalized_pr_scores = {}
-        # for doc_id, score in self.pr_scores_dict.items():
-        #     if max_pr_score > min_pr_score:
-        #         normalized_pr_scores[doc_id] = (score - min_pr_score) / (max_pr_score - min_pr_score)
-        #     else:
-        #         normalized_pr_scores[doc_id] = 1
-        #
-        # # Normalize page view scores
-        # min_pv_score = min(self.pv_scores.values())
-        # max_pv_score = max(self.pv_scores.values())
-        # normalized_pv_scores = {}
-        # for doc_id, score in self.pv_scores.items():
-        #     if max_pv_score > min_pv_score:
-        #         normalized_pv_scores[doc_id] = (score - min_pv_score) / (max_pv_score - min_pv_score)
-        #     else:
-        #         normalized_pv_scores[doc_id] = 1
-        #
-        # # Adjust merged_results based on normalized PageRank and page view scores
-        # for doc_id in merged_results.keys():
-        #     # Use normalized PageRank and page view scores for calculations
-        #     page_rank_score = normalized_pr_scores.get(doc_id, 0)
-        #     if page_rank_score > 0:  # Adjusted to check for > 0 since scores are now normalized
-        #         page_rank_score = math.log10(page_rank_score + 1)  # Add 1 to avoid log(0)
-        #
-        #     page_view_score = normalized_pv_scores.get(doc_id, 0)
-        #     if page_view_score > 0:  # Adjusted to check for > 0 since scores are now normalized
-        #         page_view_score = math.log2(page_view_score + 1)  # Add 1 to avoid log(0)
-        #
-        #     # Update merged_results with the adjusted scores
-        #     merged_results[doc_id] += page_rank_score + page_view_score
 
             page_rank_score = self.pr_scores_dict.get(doc_id, 0)
+            # page_view_score = self.pv_scores.get(doc_id, 0)
             if page_rank_score > 1:
                 page_rank_score = int(math.log10(page_rank_score))
+            # if page_view_score > 1:
+            #     page_view_score = int(math.log10(page_view_score))
             merged_results[doc_id] += page_rank_score
 
         # Step 3: Sort and return final results
