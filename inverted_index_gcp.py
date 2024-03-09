@@ -138,9 +138,6 @@ class InvertedIndex:
         for doc_id, tokens in docs.items():
             self.dict_title[doc_id]=get_wikipedia_page_title(doc_id)
             self.add_doc(doc_id, tokens)
-    def total_document_count(self):
-        # Implement a way to get the total document count
-        return len(self.df.keys())
 
     def get_doc_frequency(self, term):
         # Return the document frequency for the given term
