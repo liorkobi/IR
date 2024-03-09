@@ -1,17 +1,51 @@
+import json
 import math
 import re
 from collections import Counter
 import pandas as pd
+from google.cloud import storage
+from nltk.stem import PorterStemmer
+
 from inverted_index_gcp import InvertedIndex
 from nltk.corpus import stopwords
 import hashlib
 
+stemmer = PorterStemmer()
+
 colnames_pr = ['doc_id', 'pr']  # pagerank
+colnames_pv = ['doc_id', 'views']  # pageviews
 colnames_id_len = ['doc_id', 'len']  # dict_id_len
 
+def open_json(gcs_path):
+    # Create a GCS client
+    client = storage.Client()
+    # Get the bucket and blob from the GCS path
+    bucket_name, blob_name = gcs_path.split("//")[1].split("/", 1)
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(blob_name)
 
+    # Download the content of the blob
+    content = blob.download_as_text()
+    # Load the JSON content into a dictionary
+    result_dict = json.loads(content)
+    return result_dict
 def convert_pr_scores_to_dict(pr_scores_df):
     return pd.Series(pr_scores_df.pr.values, index=pr_scores_df.doc_id).to_dict()
+
+
+def convert_pv_scores_to_dict(pr_scores_df):
+    return pd.Series(pr_scores_df.views.values, index=pr_scores_df.doc_id).to_dict()
+
+
+def normalize_scores(scores_dict):
+    """Normalize scores to a 0-1 range."""
+    if not scores_dict:
+        return {}
+    min_score = min(scores_dict.values())
+    max_score = max(scores_dict.values())
+    if max_score == min_score:
+        return {k: 1 for k in scores_dict}  # Normalize to 1 if all scores are the same
+    return {k: (v - min_score) / (max_score - min_score) for k, v in scores_dict.items()}
 
 
 class Backend:
@@ -21,17 +55,24 @@ class Backend:
         self.pr_scores = pd.read_csv('gs://ir-proj/pr/part-00000-1ff1ba87-95eb-4744-acae-eef3dd0fa58f-c000.csv.gz',
                                      names=colnames_pr, compression='gzip')
         self.pr_scores_dict = convert_pr_scores_to_dict(self.pr_scores)
-
+        # pageviews score
+        self.pv_scores = open_json("gs://ir-dict/wid2pv_result.json")
         # dict of title and id document
         self.title_dict = InvertedIndex.read_index("title_id", "titles", "ir-proj").title_dict
-
-        self.index_text = InvertedIndex.read_index("text", "index", "ir-proj")
-        # self.index_text = InvertedIndex.read_index("text", "index", "new_index_text")
         self.index_title = InvertedIndex.read_index("title", "index", "ir-dict")
 
+        # self.index_text = InvertedIndex.read_index("text", "index", "ir-proj")
+        # with wtemming
+        self.index_text = InvertedIndex.read_index("postings_gcp", "index", "with_stemming")
+        # no stemming
+        # self.index_text = InvertedIndex.read_index("text", "index", "new_index_text")
+
         # # Id's of documents and there len
+
+        # no stemming
         # dict_id_len = pd.read_csv('gs://ir-proj/DL/part-00000-0cc0ccdf-560d-4de0-a3db-b8a0e69db3f8-c000.csv.gz',
         #                           names=colnames_id_len, compression='gzip')
+        # with stemming
         dict_id_len = pd.read_csv('gs://ir-proj/doc_id_len/part-00000-1740a912-5c7a-428a-859e-4b8ab436c316-c000.csv.gz',
                                   names=colnames_id_len, compression='gzip')
         self.index_text.DL = dict_id_len.set_index('doc_id')['len'].to_dict()
@@ -143,7 +184,8 @@ class Backend:
             # check if the term exists in the corpus
             if term in self.index_text.df:
                 # read the posting list of the term
-                posting_list = self.index_text.get_posting_list(term, "text", "ir-proj")
+                # self.index_text = InvertedIndex.read_index("postings_gcp", "index", "with_stemming")
+                posting_list = self.index_text.get_posting_list(term, "text", "with_stemming")
 
                 # calculate idf of the term
                 df = self.index_text.df[term]
@@ -167,7 +209,7 @@ class Backend:
     def search_by_title(self, query_tokens):
         title_scores = {}
         for term in query_tokens:
-            if term in self.lower_title_dict.values():
+            if term in self.index_title.df:
                 posting_list = self.index_title.get_posting_list(term, "title", "ir-dict")
                 # Loop through each document in the posting list
                 for doc_id, freq in posting_list:
@@ -178,17 +220,23 @@ class Backend:
         sorted_title_scores = sorted(title_scores.items(), key=lambda x: x[1], reverse=True)
         return sorted_title_scores
 
+
     def search_and_merge(self, query):
         TEXT_WEIGHT = 0.6
         TITLE_WEIGHT = 0.4
+        query_tokens_stem= [stemmer.stem(token.group()) for token in re.finditer(r'\w+', query.lower()) if
+                        token.group() not in all_stopwords]
+
         query_tokens = [token.group() for token in re.finditer(r'\w+', query.lower()) if
                         token.group() not in all_stopwords]
-        if len(query_tokens)==1 and query_tokens[0] in self.lower_title_dict.values():
-            TEXT_WEIGHT = 0.1
-            TITLE_WEIGHT = 0.9
+
+        if len(query_tokens)==1:
+            if query_tokens[0]  in self.lower_title_dict.values():
+                TEXT_WEIGHT = 0.1
+                TITLE_WEIGHT = 0.9
 
         # Step 1: Retrieve documents for both text and title
-        text_results = self.calculate_bm25_scores(query_tokens)
+        text_results = self.calculate_bm25_scores(query_tokens_stem)
         title_results = self.search_by_title(query_tokens)
 
         # Step 2: Merge results with a chosen strategy (e.g., weighted scores)
@@ -199,7 +247,50 @@ class Backend:
         for doc_id, score in title_results:
             merged_results[doc_id] = merged_results.get(doc_id, 0) + score * TITLE_WEIGHT
 
-        for doc_id in merged_results.keys():
+        # for doc_id in merged_results.keys():
+        #     # Factor in PageRank and popularity of pages.
+        #     page_rank_score = self.pr_scores_dict.get(doc_id, 0)
+        #     if page_rank_score > 1:
+        #         page_rank_score = int(math.log10(page_rank_score))
+        #     page_view_score = self.pv_scores_dict.get(doc_id, 0)
+        #
+        #     if page_view_score > 1:
+        #         page_view_score = int(math.log2(page_view_score))
+        #     elif page_view_score < 1:
+        #         page_view_score = 2.0
+        #     merged_results[doc_id] += page_rank_score+page_view_score
+        # min_pr_score = min(self.pr_scores_dict.values())
+        # max_pr_score = max(self.pr_scores_dict.values())
+        # normalized_pr_scores = {}
+        # for doc_id, score in self.pr_scores_dict.items():
+        #     if max_pr_score > min_pr_score:
+        #         normalized_pr_scores[doc_id] = (score - min_pr_score) / (max_pr_score - min_pr_score)
+        #     else:
+        #         normalized_pr_scores[doc_id] = 1
+        #
+        # # Normalize page view scores
+        # min_pv_score = min(self.pv_scores.values())
+        # max_pv_score = max(self.pv_scores.values())
+        # normalized_pv_scores = {}
+        # for doc_id, score in self.pv_scores.items():
+        #     if max_pv_score > min_pv_score:
+        #         normalized_pv_scores[doc_id] = (score - min_pv_score) / (max_pv_score - min_pv_score)
+        #     else:
+        #         normalized_pv_scores[doc_id] = 1
+        #
+        # # Adjust merged_results based on normalized PageRank and page view scores
+        # for doc_id in merged_results.keys():
+        #     # Use normalized PageRank and page view scores for calculations
+        #     page_rank_score = normalized_pr_scores.get(doc_id, 0)
+        #     if page_rank_score > 0:  # Adjusted to check for > 0 since scores are now normalized
+        #         page_rank_score = math.log10(page_rank_score + 1)  # Add 1 to avoid log(0)
+        #
+        #     page_view_score = normalized_pv_scores.get(doc_id, 0)
+        #     if page_view_score > 0:  # Adjusted to check for > 0 since scores are now normalized
+        #         page_view_score = math.log2(page_view_score + 1)  # Add 1 to avoid log(0)
+        #
+        #     # Update merged_results with the adjusted scores
+        #     merged_results[doc_id] += page_rank_score + page_view_score
 
             page_rank_score = self.pr_scores_dict.get(doc_id, 0)
             if page_rank_score > 1:
@@ -234,29 +325,3 @@ def _hash(s):
 def token2bucket_id(token):
     return int(_hash(token), 16) % NUM_BUCKETS
 
-# # From HW1
-# def most_viewed(pages):
-#   """Rank pages from most viewed to least viewed using the above `wid2pv`
-#      counter.
-#   Parameters:
-#   -----------
-#     pages: An iterable list of pages as returned from `page_iter` where each
-#            item is an article with (id, title, body)
-#   Returns:
-#   --------
-#   A list of tuples
-#     Sorted list of articles from most viewed to least viewed article with
-#     article title and page views. For example:
-#     [('Langnes, Troms': 16), ('Langenes': 10), ('Langenes, Finnmark': 4), ...]
-#   """
-#   # YOUR CODE HERE
-#   result = []
-#   for p in pages:
-#         id = p[0]
-#         if str(id) in wid2pv:
-#             result.append((str(p[1]), wid2pv[id]))  # title, page views
-#         else:
-#           result.append((str(p[1]), 0))
-#   # Sort the result in descending order based on page views
-#   result.sort(key=lambda x: x[1], reverse=True)
-#   return result

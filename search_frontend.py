@@ -72,8 +72,8 @@ def search_body():
     # BEGIN SOLUTION
 
     # END SOLUTION
-    res = [{"wiki_id": wiki_id, "title": title} for wiki_id, title in app.backend.calculate_bm25_scores(query)]
-    return res
+    # res = [{"wiki_id": wiki_id, "title": title} for wiki_id, title in app.backend.calculate_bm25_scores(query)]
+    # return res
 
     # return jsonify(res)
 
@@ -201,6 +201,6 @@ if __name__ == '__main__':
     print(f" * ngrok tunnel \"{public_url}\" -> \"http://127.0.0.1:8080\"")
     # Update any base URLs to use the public ngrok URL
     app.config["BASE_URL"] = public_url
-    # app.run(port=5000)
+    # app.run(port=8080)
     app.run(host='0.0.0.0', port=8080, debug=True, use_reloader=False)
 
