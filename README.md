@@ -24,4 +24,4 @@ This application is accessible via the following URL: [http://34.170.46.156:8080
 To use the system, navigate to the respective endpoints  via a web browser or API tool (like Postman or `curl`), appending query parameters as needed (e.g., `?query=hello+world`). For endpoints requiring POST requests, JSON payloads should be sent with the required data.
 
 ## Contributions
-This project is a collaborative effort by Lior Kobi and Noam Shalev  [@Noamshalev1([https://github.com/noam123](https://github.com/Noamshalev1)), aiming to explore and implement cutting-edge techniques in information retrieval within an accessible web-based application.
+This project is a collaborative effort by Lior Kobi and Noam Shalev  [@Noamshalev1]([https://github.com/noam123](https://github.com/Noamshalev1)), aiming to explore and implement cutting-edge techniques in information retrieval within an accessible web-based application.
