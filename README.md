@@ -16,7 +16,7 @@ The core of the system, responsible for query processing, document retrieval, an
 Serves as the interface between the user and the backend system. It offers several endpoints to interact with the search engine, including:
 
 - `/search`: Main search endpoint, returns top 100 results based on query.
-- 
+  
 ## Deployment
 This application is accessible via the following URL: [http://34.170.46.156:8080](http://34.170.46.156:8080). This public IP allows direct interaction with the web server and the backend search engine from anywhere on the internet.
 
