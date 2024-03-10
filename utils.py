@@ -21,6 +21,8 @@ corpus_stopwords = ["category", "references", "also", "external", "links",
                     "many", "however", "would", "became"]
 
 all_stopwords = english_stopwords.union(corpus_stopwords)
+all_stopwords = set(all_stopwords)
+
 RE_WORD = re.compile(r"""[\#\@\w](['\-]?\w){2,24}""", re.UNICODE)
 
 NUM_BUCKETS = 124
@@ -33,8 +35,6 @@ def _hash(s):
 def token2bucket_id(token):
     return int(_hash(token), 16) % NUM_BUCKETS
 
-
-stemmer = PorterStemmer()
 
 colnames_pr = ['doc_id', 'pr']  # pagerank
 colnames_pv = ['doc_id', 'views']  # pageviews
@@ -92,10 +92,6 @@ def convert_pr_scores_to_dict(pr_scores_df):
     return pd.Series(pr_scores_df.pr.values, index=pr_scores_df.doc_id).to_dict()
 
 
-def convert_pv_scores_to_dict(pr_scores_df):
-    return pd.Series(pr_scores_df.views.values, index=pr_scores_df.doc_id).to_dict()
-
-
 def normalize_scores(scores_dict):
     """Normalize scores to a 0-1 range."""
     if not scores_dict:
@@ -105,48 +101,57 @@ def normalize_scores(scores_dict):
     if max_score == min_score:
         return {k: 1 for k in scores_dict}  # Normalize to 1 if all scores are the same
     return {k: (v - min_score) / (max_score - min_score) for k, v in scores_dict.items()}
-# def expand_query_with_synonyms(query):
-#     expanded_query = set()
-#
-#     # Tokenize the query
-#     query_tokens = query.split()
-#
-#     # Iterate over each token in the query
-#     for token in query_tokens:
-#         # Get synonyms from WordNet
-#         synonyms = set()
-#         for syn in wordnet.synsets(token):
-#             for lemma in syn.lemmas():
-#                 synonyms.add(lemma.name().lower())
-#
-#         # Add the original token and its synonyms to the expanded query
-#         expanded_query.add(token.lower())
-#         expanded_query.update(synonyms)
-#     return expanded_query
 
 
+def calculate_tf_idf(self, query):
+    tf_idf_scores = {}
+    # Tokenize and filter out stopwords
+    query_tokens_stem = [stemmer.stem(token.group()) for token in re.finditer(r'\w+', query.lower()) if
+                         token.group() not in all_stopwords]
+    # Calculate TF and aggregate TF-IDF for each document
+    for term in query_tokens_stem:
+        postings = self.index_text.get_posting_list(term, "text", "with_stemming")
+        for doc_id, freq in postings:
+            tf = freq
+            tf_idf = tf * self.idf_scores[term]
+            tf_idf_scores[doc_id] = tf_idf_scores.get(doc_id, 0) + tf_idf
 
-    # def calc_idf(self, list_of_tokens):
-    #     """
-    #     This function calculates the idf values according to the precomputed BM25 idf scores for each term in the query.
-    #
-    #     Parameters:
-    #     -----------
-    #     list_of_tokens: list of token representing the query. For example: ['look', 'blue', 'sky']
-    #
-    #     Returns:
-    #     -----------
-    #     idf: dictionary of idf scores. As follows:
-    #                                                     key: term
-    #                                                     value: bm25 idf score
-    #     """
-    #     idf = {}
-    #     for term in list_of_tokens:
-    #         if term in self.idf_scores:
-    #             idf[term] = self.idf_scores[term]
-    #         else:
-    #             # Optionally handle terms not present in the precomputed scores,
-    #             # for example, by assigning them a default score.
-    #             pass
-    #
-    #     return idf
+    # Combine TF-IDF scores with PageRank and fetch Wikipedia titles
+    res = []
+    for doc_id, tf_idf_score in sorted(tf_idf_scores.items(), key=lambda item: item[1], reverse=True)[:100]:
+        page_rank_score = self.pr_scores_dict.get(doc_id, 0)
+        combined_score = tf_idf_score + page_rank_score
+        res.append((combined_score, str(doc_id), self.title_dict.get(doc_id)))
+
+    # Sort by the combined score
+    res_sorted = sorted(res, key=lambda x: x[0], reverse=True)
+
+    # Extract only the title and document ID from the sorted results
+    res_final = [(doc_id, doc_title) for _, doc_id, doc_title in res_sorted]
+
+    return res_final
+
+
+def optimize_weights(query, query_tokens):
+    query_type = classify_query(query)
+    text_weight, title_weight = 0.6, 0.4
+
+    if query_type == 'factual' or len(query_tokens) <= 3:
+        text_weight, title_weight = 0.1, 0.9
+    elif query_type == 'detailed_explanation':
+        text_weight, title_weight = 0.7, 0.3
+
+    return text_weight, title_weight
+
+import pickle
+
+# def get_pv():
+#     client = storage.Client()
+#     bucket_name = 'ir-proj'
+#     blob_name = 'page_views/pageviews-202108-user.pkl'
+#     bucket = client.bucket(bucket_name)
+#     blob = bucket.blob(blob_name)
+#     with blob.open("rb") as f:
+#         data = pickle.load(f)
+#     return data
+
