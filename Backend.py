@@ -5,6 +5,13 @@ stemmer = PorterStemmer()
 
 class Backend:
     def __init__(self):
+        """
+        Initializes the Backend object by loading necessary data for search operations.
+        This includes reading and processing PageRank and vector space model scores,
+        creating dictionaries for document titles and lengths, calculating average document length,
+        and pre-computing IDF scores for terms.
+        """
+
         self.tf_idf_scores = None
         self.pr_scores = pd.read_csv('gs://ir-proj/pr/part-00000-1ff1ba87-95eb-4744-acae-eef3dd0fa58f-c000.csv.gz',names=colnames_pr, compression='gzip')
         pr_scores_dict_tmp = convert_pr_scores_to_dict(self.pr_scores)
@@ -49,6 +56,16 @@ class Backend:
         }
 
     def calculate_bm25_scores(self, query):
+        """
+        Calculates BM25 scores for a given query against all documents in the index.
+
+        Parameters:
+        - query: A list of query terms (after processing like stemming).
+
+        Returns:
+        - A Counter object with document IDs as keys and their BM25 scores as values.
+        """
+
         k2 = 10.0
         k1 = 1
         b = 0.75
@@ -72,6 +89,16 @@ class Backend:
 
         return candidates
     def search_by_title(self, query_tokens):
+        """
+        Searches documents by titles using the given query tokens.
+
+        Args:
+            query_tokens (list of str): Tokens extracted from the user query, used to match document titles.
+
+        Returns:
+            dict: A dictionary with document IDs as keys and their associated scores based on title matches.
+        """
+
         title_scores = {}
         for term in query_tokens:
             if term in self.index_title.df:
@@ -82,6 +109,17 @@ class Backend:
 
 
     def search_and_merge(self, query):
+        """
+        Processes the query, performs a search by both text and title, merges the results based on weights,
+        and applies PageRank score adjustments before returning the top results.
+
+        Args:
+            query (str): The user's search query.
+
+        Returns:
+            list of tuples: Each tuple contains the document ID and title for the top matching documents.
+        """
+
         query_tokens_stem = [stemmer.stem(token.group()) for token in re.finditer(r'\w+', query.lower()) if
                              token.group() not in all_stopwords]
         query_tokens = [token.group() for token in re.finditer(r'\w+', query.lower()) if
@@ -110,52 +148,3 @@ class Backend:
 
         return res
 
-
-    # def search_and_merge(self, query):
-    #     query_tokens_stem = [stemmer.stem(token.group()) for token in re.finditer(r'\w+', query.lower()) if
-    #                          token.group() not in all_stopwords]
-    #     query_tokens = [token.group() for token in re.finditer(r'\w+', query.lower()) if
-    #                     token.group() not in all_stopwords]
-    #
-    #     # Classify the query
-    #     TEXT_WEIGHT, TITLE_WEIGHT = optimize_weights(query, query_tokens)
-    #
-    #     # Step 1: Retrieve documents for both text and title
-    #     text_results = self.calculate_bm25_scores(query_tokens_stem)
-    #     title_results = self.search_by_title(query_tokens)
-    #
-    #     # Step 2: Merge results with a chosen strategy (e.g., weighted scores)
-    #     merged_results = {}
-    #     for doc_id, score in {**text_results, **title_results}.items():
-    #         text_score = text_results.get(doc_id, 0) * TEXT_WEIGHT
-    #         title_score = title_results.get(doc_id, 0) * TITLE_WEIGHT
-    #         merged_results[doc_id] = text_score + title_score
-    #
-    #     # merged_results = {}
-    #     # # First pass: Add text scores, multiply by TEXT_WEIGHT
-    #     # for doc_id, score in text_results.items():
-    #     #     merged_results[doc_id] = score * TEXT_WEIGHT
-    #     #
-    #     # # Second pass: Add or update with title scores, multiplied by TITLE_WEIGHT
-    #     # for doc_id, score in title_results.items():
-    #     #     if doc_id in merged_results:
-    #     #         # If doc_id already exists, update the score
-    #     #         merged_results[doc_id] += score * TITLE_WEIGHT
-    #     #     else:
-    #     #         # Otherwise, add the new doc_id with its score
-    #     #         merged_results[doc_id] = score * TITLE_WEIGHT
-    #     # Apply page rank score adjustments
-    # for doc_id in merged_results:
-    #     merged_results[doc_id] += (self.pv_scores_dict.get(doc_id, 0)+self.pr_scores_dict.get(doc_id, 0))
-    #     #
-    #     # # Sort and return the final results
-    #     # final_results = sorted(merged_results.items(), key=lambda x: x[1], reverse=True)[:100]
-    #     #
-    #     # res = [(str(doc_id), self.title_dict.get(doc_id, 'Unknown Title')) for doc_id, _ in final_results]
-    #     # # Integrate scores from page views and page ranks directly into the sorting key to avoid additional iterations
-    #     final_results = sorted(merged_results.items(),
-    #                            key=lambda x: x[1] + self.pv_scores.get(x[0], 0) + self.pr_scores_dict.get(x[0], 0),
-    #                            reverse=True)[:100]
-    #     res = [(str(doc_id), self.title_dict.get(doc_id, 'Unknown Title')) for doc_id, _ in final_results]
-    #
-    #     return res

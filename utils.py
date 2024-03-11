@@ -70,6 +70,16 @@ def preprocess_query(query):
 
 
 def classify_query(query):
+    """
+    Classifies a query into categories based on its content.
+
+    Args:
+        query (str): The query to classify.
+
+    Returns:
+        str: The classification of the query.
+    """
+
     # Keywords for factual questions
     if re.search(r'who|what|when|where|why|how|which', query, re.IGNORECASE):
         return 'factual'
