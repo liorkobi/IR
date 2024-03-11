@@ -145,13 +145,13 @@ def optimize_weights(query, query_tokens):
 
 import pickle
 
-# def get_pv():
-#     client = storage.Client()
-#     bucket_name = 'ir-proj'
-#     blob_name = 'page_views/pageviews-202108-user.pkl'
-#     bucket = client.bucket(bucket_name)
-#     blob = bucket.blob(blob_name)
-#     with blob.open("rb") as f:
-#         data = pickle.load(f)
-#     return data
 
+def get_pv():
+    client = storage.Client()
+    bucket_name = 'ir-dict'
+    blob_name = 'pageviews-202108-user.pkl'
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(blob_name)
+    with blob.open("rb") as f:
+        data = pickle.load(f)
+    return data

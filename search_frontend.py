@@ -11,17 +11,6 @@ class MyFlaskApp(Flask):
         super(MyFlaskApp, self).__init__(*args, **kwargs)
         self.backend = Backend()
 
-
-        # def precompute_tf_idf():
-        #     self.tf_idf_scores = {}  # Dictionary to store TF-IDF scores
-        #     for term in self.backend.index_text.df.keys():
-        #         df = self.backend.index_text.get_doc_frequency(term)
-        #         idf = math.log((self.backend.N - df + 0.5) / (df + 0.5) + 1)
-        #         postings = self.backend.index_text.get_posting_list(term, "postings_gcp", "with_stemming")
-        #         for doc_id, tf in postings:
-        #             # Calculate TF-IDF and store it
-        #             self.backend.tf_idf_scores.setdefault(doc_id, {})[term] = tf * idf
-
     def run(self, host=None, port=None, debug=None, **options):
         super(MyFlaskApp, self).run(host=host, port=port, debug=debug, **options)
 
